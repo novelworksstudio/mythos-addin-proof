@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<!--
+  taskpane_proof_003.html — MYTHOS METHOD, PROOF 003 (the store route).   6 October 2026.
+  Served from a PUBLIC https address (GitHub Pages), NOT from localhost. It asks
+  whether this page, inside Word, can reach proof_addin_003.py on plain http
+  localhost with no certificate the user must trust.
+  Tests A–E. Nothing here edits the document: D and E only read it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mythos Proof 3</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+  body { font: 13px -apple-system, "Segoe UI", sans-serif; margin: 10px; color: #222; }
+  h1 { font-size: 15px; margin: 0 0 6px; }
+  .env { font-size: 11px; color: #555; white-space: pre-wrap; margin-bottom: 8px; }
+  button { display: block; width: 100%; margin: 4px 0; padding: 6px; text-align: left; font-size: 12px; cursor: pointer; }
+  pre { font-size: 11px; white-space: pre-wrap; word-break: break-word; background: #f4f4f4; padding: 6px; min-height: 120px; }
+  .pass { color: #1B6E33; font-weight: bold; }
+  .fail { color: #B3261E; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>Mythos Proof 3 — public page → local app</h1>
+<div class="env" id="env">loading…</div>
+<button id="bA">A · GET http://127.0.0.1:8767/ping</button>
+<button id="bB">B · GET http://localhost:8767/ping</button>
+<button id="bC">C · POST a body (JSON, then plain text)</button>
+<button id="bD">D · Read this document's whole .docx and send it</button>
+<button id="bE">E · Ask Word for a PDF of this document and send it</button>
+<button id="bAll">Run A, B, C (D and E need a press each)</button>
+<button id="bLog">Send this log to the local server (results file)</button>
+<pre id="log"></pre>
+
+<script>
+const HOSTS = { A: "http://127.0.0.1:8767", B: "http://localhost:8767" };
+let BASE = null;                 // first address that answered, used by C, D, E and the log
+const lines = [];
+
+function out(text, cls) {
+  const t = new Date().toTimeString().slice(0, 8) + "  " + text;
+  lines.push(t);
+  const el = document.getElementById("log");
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = t + "\n";
+  el.appendChild(span);
+}
+const PASS = (s) => out("PASS  " + s, "pass");
+const FAIL = (s) => out("FAIL  " + s, "fail");
+const errText = (e) => (e && (e.name + ": " + e.message)) || String(e);
+
+async function timed(fn) { const t0 = performance.now(); const r = await fn(); return [r, Math.round(performance.now() - t0)]; }
+
+async function ping(label) {
+  const url = HOSTS[label] + "/ping";
+  try {
+    const [res, ms] = await timed(() => fetch(url, { cache: "no-store" }));
+    const j = await res.json();
+    if (res.ok && j.ok) {
+      PASS(`${label}  ${url} → ${res.status}, server answered on ${j.socket}, ${ms} ms`);
+      if (!BASE) BASE = HOSTS[label];
+      return true;
+    }
+    FAIL(`${label}  ${url} → HTTP ${res.status} ${JSON.stringify(j)}`);
+  } catch (e) {
+    FAIL(`${label}  ${url} → ${errText(e)}  (blocked before reaching the server, or nothing listening)`);
+  }
+  return false;
+}
+
+function base() {
+  if (!BASE) { FAIL("no local address answered yet — run A or B first"); return null; }
+  return BASE;
+}
+
+async function testC() {
+  const b = base(); if (!b) return;
+  const sample = "Fio — “curly quotes”, café, ñ, 🐆";
+  for (const [kind, ctype, body] of [
+    ["JSON (preflighted)", "application/json", JSON.stringify({ test: "C", text: sample })],
+    ["text/plain (simple)", "text/plain;charset=UTF-8", sample]]) {
+    try {
+      const [res, ms] = await timed(() => fetch(b + "/echo", { method: "POST", headers: { "Content-Type": ctype }, body }));
+      const j = await res.json();
+      const roundTrip = kind.startsWith("JSON") ? (JSON.parse(j.text).text === sample) : (j.text === sample);
+      (res.ok && roundTrip ? PASS : FAIL)(`C  ${kind} → ${res.status}, ${j.bytes} bytes, text ${roundTrip ? "intact" : "CHANGED"}, ${ms} ms`);
+    } catch (e) { FAIL(`C  ${kind} → ${errText(e)}`); }
+  }
+}
+
+function readWholeFile(fileType) {
+  // Word hands the file over in slices of up to 4 MB; only one file may be open at a time.
+  return new Promise((resolve, reject) => {
+    Office.context.document.getFileAsync(fileType, { sliceSize: 4194304 }, (r) => {
+      if (r.status !== Office.AsyncResultStatus.Succeeded) return reject(r.error);
+      const file = r.value, count = file.sliceCount, parts = [];
+      let got = 0;
+      const next = (i) => file.getSliceAsync(i, (s) => {
+        if (s.status !== Office.AsyncResultStatus.Succeeded) { file.closeAsync(); return reject(s.error); }
+        parts[i] = new Uint8Array(s.value.data); got++;
+        if (got === count) {
+          file.closeAsync();
+          const total = parts.reduce((n, p) => n + p.length, 0), all = new Uint8Array(total);
+          let off = 0; for (const p of parts) { all.set(p, off); off += p.length; }
+          resolve({ bytes: all, slices: count });
+        } else next(i + 1);
+      });
+      next(0);
+    });
+  });
+}
+
+async function sendFile(label, kind, fileType) {
+  const b = base(); if (!b) return;
+  out(`${label}  asking Word for the ${kind.toUpperCase()}…`);
+  let got, readMs;
+  try { [got, readMs] = await timed(() => readWholeFile(fileType)); }
+  catch (e) { return FAIL(`${label}  Word did not hand over the ${kind}: ${e.code || ""} ${e.message || errText(e)}`); }
+  out(`${label}  Word gave ${got.bytes.length.toLocaleString()} bytes in ${got.slices} slice(s), ${readMs} ms; sending…`);
+  try {
+    const [res, ms] = await timed(() => fetch(`${b}/upload?kind=${kind}&read_ms=${readMs}`,
+      { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: got.bytes }));
+    const j = await res.json();
+    (res.ok && j.ok ? PASS : FAIL)(`${label}  ${kind}: ${j.detail} (send ${ms} ms)`);
+  } catch (e) { FAIL(`${label}  sending the ${kind} → ${errText(e)}`); }
+}
+
+async function sendLog() {
+  const b = base(); if (!b) return;
+  try {
+    const res = await fetch(b + "/log", { method: "POST", headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      body: document.getElementById("env").textContent + "\n" + lines.join("\n") });
+    const j = await res.json();
+    out("log sent → " + j.results_file);
+  } catch (e) { FAIL("sending the log → " + errText(e) + " — select the log above and copy it instead"); }
+}
+
+Office.onReady((info) => {
+  const req = (set, v) => { try { return Office.context.requirements.isSetSupported(set, v) ? "yes" : "no"; } catch (e) { return "?"; } };
+  const d = Office.context.diagnostics || {};
+  document.getElementById("env").textContent =
+    `Page origin: ${location.origin}   secure context: ${window.isSecureContext}\n` +
+    `Word: ${d.host || info.host} ${d.version || "?"} on ${d.platform || info.platform}\n` +
+    `File 1.1: ${req("File", "1.1")}   PdfFile 1.1: ${req("PdfFile", "1.1")}   CompressedFile 1.1: ${req("CompressedFile", "1.1")}   WordApi 1.4: ${req("WordApi", "1.4")}\n` +
+    `UA: ${navigator.userAgent}`;
+  document.getElementById("bA").onclick = () => ping("A");
+  document.getElementById("bB").onclick = () => ping("B");
+  document.getElementById("bC").onclick = testC;
+  document.getElementById("bD").onclick = () => sendFile("D", "docx", Office.FileType.Compressed);
+  document.getElementById("bE").onclick = () => sendFile("E", "pdf", Office.FileType.Pdf);
+  document.getElementById("bAll").onclick = async () => { await ping("A"); await ping("B"); await testC(); };
+  document.getElementById("bLog").onclick = sendLog;
+  out("ready — start proof_addin_003.py in Terminal, then press A.");
+});
+</script>
+</body>
+</html>
