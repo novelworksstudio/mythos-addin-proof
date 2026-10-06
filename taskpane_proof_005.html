@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<!--
+  taskpane_proof_005.html — MYTHOS METHOD, PROOF 005, part 2 (the store route).   6 October 2026.
+  Can Word's panel wake a local app with a link of the app's own scheme
+  (mythosproof005://...)? Four ways of opening a link; the app logs what
+  arrives (proof_ae_005.py, watch-links option). The page carries only a word —
+  never document data. Sends nothing over the network.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mythos Proof 5</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+  body { font: 13px -apple-system, "Segoe UI", sans-serif; margin: 10px; color: #222; }
+  h1 { font-size: 15px; margin: 0 0 6px; }
+  .env { font-size: 11px; color: #555; white-space: pre-wrap; margin-bottom: 8px; }
+  button, a.btn { display: block; width: 100%; box-sizing: border-box; margin: 4px 0; padding: 6px; text-align: left; font-size: 12px; cursor: pointer; }
+  a.btn { border: 1px solid #aaa; border-radius: 4px; color: #222; text-decoration: none; background: #f7f7f7; }
+  pre { font-size: 11px; white-space: pre-wrap; word-break: break-word; background: #f4f4f4; padding: 6px; min-height: 100px; user-select: text; -webkit-user-select: text; }
+  .fail { color: #B3261E; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>Mythos Proof 5 — the panel wakes the app</h1>
+<div class="env" id="env">loading…</div>
+<button id="b1">L1 · window.open(link)</button>
+<button id="b2">L2 · hidden frame loads the link</button>
+<a class="btn" id="a3" href="mythosproof005://L3-plain-link">L3 · a plain link (click it)</a>
+<button id="b4">L4 · Office's openBrowserWindow(link)</button>
+<pre id="log"></pre>
+<script>
+const S = "mythosproof005://";
+function out(t, cls) {
+  const s = document.createElement("span"); if (cls) s.className = cls;
+  s.textContent = new Date().toTimeString().slice(0, 8) + "  " + t + "\n";
+  document.getElementById("log").appendChild(s);
+}
+const tried = (n) => out(n + " tried — watch Terminal (--watch-links) for LINK ARRIVED " + n);
+Office.onReady((info) => {
+  const d = Office.context.diagnostics || {};
+  const req = (s, v) => { try { return Office.context.requirements.isSetSupported(s, v) ? "yes" : "no"; } catch (e) { return "?"; } };
+  document.getElementById("env").textContent =
+    `Word: ${d.host || info.host} ${d.version || "?"} on ${d.platform || info.platform}   OpenBrowserWindowApi 1.1: ${req("OpenBrowserWindowApi", "1.1")}`;
+  document.getElementById("b1").onclick = () => {
+    try { const w = window.open(S + "L1-window-open"); tried("L1" + (w ? "" : " (window.open returned nothing)")); }
+    catch (e) { out("L1 threw " + e.name + ": " + e.message, "fail"); }
+  };
+  document.getElementById("b2").onclick = () => {
+    try { const f = document.createElement("iframe"); f.style.display = "none"; f.src = S + "L2-hidden-frame";
+          document.body.appendChild(f); setTimeout(() => f.remove(), 3000); tried("L2"); }
+    catch (e) { out("L2 threw " + e.name + ": " + e.message, "fail"); }
+  };
+  document.getElementById("a3").onclick = () => tried("L3");
+  document.getElementById("b4").onclick = () => {
+    try { Office.context.ui.openBrowserWindow(S + "L4-openBrowserWindow"); tried("L4"); }
+    catch (e) { out("L4 threw " + e.name + ": " + e.message, "fail"); }
+  };
+  out("ready — start  proof_ae_005.py --watch-links  in Terminal, then press L1 to L4.");
+});
+</script>
+</body>
+</html>
