@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<!--
+  taskpane_proof_004.html — MYTHOS METHOD, PROOF 004 (the store route).   6 October 2026.
+  Follows Proof 003, which showed Word for Mac 16.105 blocks a public https page
+  from calling plain http://localhost. This page proves the OTHER half on its
+  own: does Word really hand over the whole manuscript —
+    D′  the open document's whole .docx (Office.FileType.Compressed)
+    E′  a PDF of the open document, made by Word (Office.FileType.Pdf)
+  The page checks what it receives ITSELF and sends NOTHING anywhere. No local
+  server is needed. Nothing in the document is edited.
+  Same public home as Proof 003; opened by its own manifest_proof_004.xml
+  (new add-in ID, Home → Mythos Proof 4).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mythos Proof 4</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+  body { font: 13px -apple-system, "Segoe UI", sans-serif; margin: 10px; color: #222; }
+  h1 { font-size: 15px; margin: 0 0 6px; }
+  .env { font-size: 11px; color: #555; white-space: pre-wrap; margin-bottom: 8px; }
+  button { display: block; width: 100%; margin: 4px 0; padding: 6px; text-align: left; font-size: 12px; cursor: pointer; }
+  pre { font-size: 11px; white-space: pre-wrap; word-break: break-word; background: #f4f4f4; padding: 6px; min-height: 120px; user-select: text; -webkit-user-select: text; }
+  .pass { color: #1B6E33; font-weight: bold; }
+  .fail { color: #B3261E; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>Mythos Proof 4 — Word hands over the book (read only)</h1>
+<div class="env" id="env">loading…</div>
+<button id="bW">W · How many paragraphs does Word itself count?</button>
+<button id="bD">D′ · Read the whole .docx and check it here</button>
+<button id="bE">E′ · Ask Word for a PDF and check it here</button>
+<button id="bSel">Select the log (then Cmd-C)</button>
+<pre id="log"></pre>
+
+<script>
+const lines = [];
+function out(text, cls) {
+  const t = new Date().toTimeString().slice(0, 8) + "  " + text;
+  lines.push(t);
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = t + "\n";
+  document.getElementById("log").appendChild(span);
+}
+const PASS = (s) => out("PASS  " + s, "pass");
+const FAIL = (s) => out("FAIL  " + s, "fail");
+const MB = (n) => (n / 1048576).toFixed(1) + " MB";
+const errText = (e) => (e && ((e.code ? e.code + " " : "") + (e.name || "") + ": " + e.message)) || String(e);
+
+function readWholeFile(fileType) {
+  // Word hands the file over in slices of up to 4 MB; only one file may be open at a time.
+  return new Promise((resolve, reject) => {
+    Office.context.document.getFileAsync(fileType, { sliceSize: 4194304 }, (r) => {
+      if (r.status !== Office.AsyncResultStatus.Succeeded) return reject(r.error);
+      const file = r.value, count = file.sliceCount, parts = [];
+      let got = 0;
+      const next = (i) => file.getSliceAsync(i, (s) => {
+        if (s.status !== Office.AsyncResultStatus.Succeeded) { file.closeAsync(); return reject(s.error); }
+        parts[i] = new Uint8Array(s.value.data); got++;
+        if (got === count) {
+          file.closeAsync();
+          const total = parts.reduce((n, p) => n + p.length, 0), all = new Uint8Array(total);
+          let off = 0; for (const p of parts) { all.set(p, off); off += p.length; }
+          resolve({ bytes: all, slices: count });
+        } else next(i + 1);
+      });
+      next(0);
+    });
+  });
+}
+
+// Minimal .zip reader: find word/document.xml and inflate it in the page.
+async function docxBody(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error("no zip directory found");
+  const entries = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true), media = 0, target = null;
+  const dec = new TextDecoder();
+  for (let k = 0; k < entries; k++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error("zip directory damaged");
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+    const nlen = dv.getUint16(p + 28, true), elen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+    const local = dv.getUint32(p + 42, true);
+    const name = dec.decode(bytes.subarray(p + 46, p + 46 + nlen));
+    if (name.startsWith("word/media/")) media++;
+    if (name === "word/document.xml") target = { method, csize, local };
+    p += 46 + nlen + elen + clen;
+  }
+  if (!target) throw new Error("no word/document.xml inside");
+  const ln = dv.getUint16(target.local + 26, true), le = dv.getUint16(target.local + 28, true);
+  const start = target.local + 30 + ln + le, raw = bytes.subarray(start, start + target.csize);
+  let xml;
+  if (target.method === 0) xml = dec.decode(raw);
+  else if (target.method === 8)
+    xml = await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).text();
+  else throw new Error("unknown compression " + target.method);
+  return { xml, media, entries };
+}
+
+async function wordCount() {
+  try {
+    await Word.run(async (ctx) => {
+      const ps = ctx.document.body.paragraphs; ps.load("$none");
+      const t0 = performance.now(); await ctx.sync();
+      PASS(`W  Word counts ${ps.items.length.toLocaleString()} paragraphs in the body (${Math.round(performance.now() - t0)} ms)`);
+    });
+  } catch (e) { FAIL("W  " + errText(e)); }
+}
+
+async function testD() {
+  out("D′  asking Word for the whole .docx…");
+  const t0 = performance.now(); let got;
+  try { got = await readWholeFile(Office.FileType.Compressed); }
+  catch (e) { return FAIL("D′  Word did not hand over the .docx: " + errText(e)); }
+  const readMs = Math.round(performance.now() - t0);
+  out(`D′  Word gave ${got.bytes.length.toLocaleString()} bytes (${MB(got.bytes.length)}) in ${got.slices} slice(s), ${readMs} ms`);
+  try {
+    const t1 = performance.now(), b = await docxBody(got.bytes);
+    const paras = (b.xml.match(/<w:p[ >]/g) || []).length;
+    PASS(`D′  opens as .docx here: ${b.entries} parts, ${b.media} media files, ${paras.toLocaleString()} paragraphs (w:p, incl. tables), document.xml ${MB(b.xml.length)} — checked in ${Math.round(performance.now() - t1)} ms`);
+  } catch (e) { FAIL("D′  received, but it does not open as .docx: " + errText(e)); }
+}
+
+async function testE() {
+  out("E′  asking Word for a PDF of the whole document… (a book takes a while)");
+  const t0 = performance.now(); let got;
+  try { got = await readWholeFile(Office.FileType.Pdf); }
+  catch (e) { return FAIL("E′  Word did not make the PDF: " + errText(e)); }
+  const ms = Math.round(performance.now() - t0), b = got.bytes;
+  const head = String.fromCharCode(...b.subarray(0, 5));
+  if (head !== "%PDF-") return FAIL(`E′  Word gave ${MB(b.length)}, but it does not start with %PDF (starts "${head}")`);
+  const text = new TextDecoder("latin1").decode(b);
+  const pages = (text.match(/\/Type\s*\/Page(?!s)/g) || []).length;
+  PASS(`E′  Word made a PDF: ${b.length.toLocaleString()} bytes (${MB(b.length)}) in ${got.slices} slice(s), ${ms} ms; about ${pages} pages (by /Type /Page; compressed PDFs can undercount)`);
+}
+
+Office.onReady((info) => {
+  const req = (set, v) => { try { return Office.context.requirements.isSetSupported(set, v) ? "yes" : "no"; } catch (e) { return "?"; } };
+  const d = Office.context.diagnostics || {};
+  document.getElementById("env").textContent =
+    `Page origin: ${location.origin}\n` +
+    `Word: ${d.host || info.host} ${d.version || "?"} on ${d.platform || info.platform}\n` +
+    `PdfFile 1.1: ${req("PdfFile", "1.1")}   CompressedFile 1.1: ${req("CompressedFile", "1.1")}   WordApi 1.4: ${req("WordApi", "1.4")}   DecompressionStream: ${typeof DecompressionStream !== "undefined" ? "yes" : "no"}`;
+  document.getElementById("bW").onclick = wordCount;
+  document.getElementById("bD").onclick = testD;
+  document.getElementById("bE").onclick = testE;
+  document.getElementById("bSel").onclick = () => {
+    const r = document.createRange(); r.selectNodeContents(document.getElementById("log"));
+    const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  };
+  out("ready — press W, then D′, then E′. Nothing is sent anywhere.");
+});
+</script>
+</body>
+</html>
