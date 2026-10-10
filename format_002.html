@@ -1,0 +1,100 @@
+<!doctype html>
+<!-- format_002.html — NovelWorks · Format in Word.   10 October 2026.   Proof 031 (Product_054 §160): 001 and a New revision button.
+     format_001.html — Proof 030 (Product_053 §157).
+     The add-in carries no engine: a button writes a request into the document's custom properties
+     (NovelWorks.Ask = "id|job|scope|clean"); the NovelWorks app, watching Word, takes it out, runs Format, and
+     answers in NovelWorks.Reply = "id|kind|text". Screen ID: word.format -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NovelWorks — Format</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+:root{--bg:#f6f2ea;--ink:#2b2622;--mute:#7a7068;--line:#ddd3c4;--btn:#2f4a45;--warn:#9a3b1f;--ok:#2f6a3f}
+@media (prefers-color-scheme:dark){:root{--bg:#1f1c19;--ink:#ece6dc;--mute:#a59a8e;--line:#3a342e;--btn:#5f8c84;--warn:#e08a6a;--ok:#8fcf9f}}
+body{background:var(--bg);color:var(--ink);font:13px/1.45 -apple-system,system-ui,sans-serif;margin:0;padding:14px 14px 40px}
+h1{font:600 18px/1.2 Georgia,serif;margin:0 0 2px}
+.sub{color:var(--mute);margin:0 0 14px}
+h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:14px 0 6px}
+label{display:block;margin:3px 0}
+.btn{display:block;width:100%;margin:6px 0;padding:8px 10px;border:0;border-radius:7px;background:var(--btn);color:#fff;font:600 13px system-ui;text-align:left;cursor:pointer}
+.btn small{display:block;font-weight:400;opacity:.85}
+.btn:disabled{opacity:.4;cursor:default}
+#st{margin-top:12px;padding:8px 10px;border:1px solid var(--line);border-radius:7px;min-height:18px}
+#st.ok{border-color:var(--ok)} #st.warn{border-color:var(--warn);color:var(--warn)}
+#help{display:none;border-top:1px solid var(--line);margin-top:16px;padding-top:6px}
+#help p{margin:6px 0}
+.foot{position:fixed;left:0;right:0;bottom:0;padding:6px 14px;background:var(--bg);border-top:1px solid var(--line);color:var(--mute);font-size:11px;display:flex;justify-content:space-between}
+.foot a{color:var(--mute)}
+</style></head><body>
+<h1>Format</h1>
+<p class="sub">NovelWorks formats the manuscript — the app must be open with this book.</p>
+<h2>On</h2>
+<label><input type="radio" name="scope" value="selection" checked> The selection</label>
+<label><input type="radio" name="scope" value="chapter"> This chapter</label>
+<label><input type="radio" name="scope" value="book"> The whole book</label>
+<h2>Do</h2>
+<button class="btn" data-job="unreviewed">Unreviewed<small>Short tags red, 12 pt — still to hear</small></button>
+<button class="btn" data-job="finished">Finished<small>Tags written long, grey, 5 pt, italic — heard and approved</small></button>
+<button class="btn" data-job="soft">Soft returns<small>Split tag lines glued by a soft return</small></button>
+<h2>Revision</h2>
+<button class="btn" data-job="bump">New revision<small>Start the next numbered version — also Ctrl+Option+Cmd+R</small></button>
+<div id="st">Ready.</div>
+<div id="help">
+<p><b>How it works.</b> Each button asks NovelWorks to run its Format on the part you chose. Nothing is formatted in Word itself — the app does the work, the same Format as on its own Format page.</p>
+<p><b>The first change of a sitting</b> makes the next version of the manuscript, like every write the app makes. This window closes with the old version; open the new one's Format again.</p>
+<p><b>New revision</b> makes the next numbered version of the manuscript now and opens it in Word; the one before stays on disk as it is. NovelWorks also offers it when you start a sitting.</p>
+<p><b>If nothing happens,</b> open NovelWorks and work on this book, then press again.</p>
+</div>
+<div class="foot"><a href="#" id="q">? Help</a><span>word.format · 002</span></div>
+<script>
+const ASK = "NovelWorks.Ask", REPLY = "NovelWorks.Reply";
+const st = document.getElementById('st');
+function say(t, k){ st.textContent = t; st.className = k || ''; }
+function busy(b){ document.querySelectorAll('.btn').forEach(x => x.disabled = b); }
+document.getElementById('q').onclick = e => { e.preventDefault(); const h = document.getElementById('help'); h.style.display = h.style.display === 'block' ? 'none' : 'block'; };
+
+async function readProps(){
+  return Word.run(async ctx => {
+    const c = ctx.document.properties.customProperties;
+    const a = c.getItemOrNullObject(ASK), r = c.getItemOrNullObject(REPLY);
+    a.load('value'); r.load('value'); await ctx.sync();
+    return { ask: a.isNullObject ? null : String(a.value), reply: r.isNullObject ? null : String(r.value) };
+  });
+}
+async function drop(name){
+  return Word.run(async ctx => { const p = ctx.document.properties.customProperties.getItemOrNullObject(name); await ctx.sync(); if (!p.isNullObject) { p.delete(); await ctx.sync(); } });
+}
+
+async function press(job){
+  const scope = document.querySelector('input[name=scope]:checked').value;
+  const id = Math.random().toString(36).slice(2, 8);
+  busy(true); say(job === 'bump' ? 'Asking NovelWorks for a new revision…' : 'Asking NovelWorks…');
+  try {
+    let clean = '?';
+    try { await Word.run(async ctx => { ctx.document.load('saved'); await ctx.sync(); clean = ctx.document.saved ? '1' : '0'; }); } catch (e) {}
+    await Word.run(async ctx => { ctx.document.properties.customProperties.add(ASK, [id, job, scope, clean].join('|')); await ctx.sync(); });
+  } catch (e) { say('Could not write the request: ' + (e.message || e), 'warn'); busy(false); return; }
+  const t0 = Date.now(); let taken = false;
+  const tick = async () => {
+    let p; try { p = await readProps(); } catch (e) { say('Lost the document — ' + (e.message || e), 'warn'); busy(false); return; }
+    if (p.reply && p.reply.startsWith(id + '|')) {
+      const [, kind, ...rest] = p.reply.split('|');
+      say(rest.join('|'), kind === 'warn' ? 'warn' : 'ok'); busy(false);
+      try { await drop(REPLY); } catch (e) {}
+      return;
+    }
+    if (p.ask && p.ask.startsWith(id + '|')) {
+      if (Date.now() - t0 > 10000) { try { await drop(ASK); } catch (e) {} say('NovelWorks did not answer. Open it, work on this book, and press again.', 'warn'); busy(false); return; }
+    } else if (!taken) { taken = true; say('NovelWorks has it — working…'); }
+    if (Date.now() - t0 > 180000) { say('No answer here — see NovelWorks.', 'warn'); busy(false); return; }
+    setTimeout(tick, 500);
+  };
+  setTimeout(tick, 500);
+}
+
+Office.onReady(info => {
+  if (info.host !== Office.HostType.Word) { say('Open this in Word.', 'warn'); busy(true); return; }
+  if (!Office.context.requirements.isSetSupported('WordApi', '1.3')) { say('This Word is too old for Format (needs WordApi 1.3).', 'warn'); busy(true); return; }
+  document.querySelectorAll('.btn').forEach(b => b.onclick = () => press(b.dataset.job));
+});
+</script>
+</body></html>
