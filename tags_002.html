@@ -1,0 +1,142 @@
+<!doctype html>
+<!-- tags_002.html — NovelWorks · Tags in Word.   14 October 2026.   Proof Word-CC-002 — the labels' look (Product_102 §283):
+     VIEW gains Box (Word's bounding box: a thin outline, the name only with the cursor in the line); LABELS: Name / Short
+     (the shortest letters that tell this book's characters apart — R, F, L, B). Tony: "Both. See it in Word first."
+     tags_001.html — Proof Word-CC-001 (Product_101 §281; StoreRoute_114).
+     A speaker tag as a Word content control: the tagged span wrapped in a control carrying the tag (hidden, "MM:Fio"),
+     the title Word shows ("Fio") and a colour per character; shown as Tags (labelled markers) or Hidden (clean prose).
+     PROOF-GRADE: this page converts by itself. In the product the conversion is the NovelWorks app's (section 109: the
+     add-in carries no engine). The span rule here is structural, not MML's voicing rule: from the first paragraph under
+     a voice tag to the next blank line or // line. //Note, //pause, //slow0 and //narrator lines stay as text.
+     Screen ID: word.tags -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NovelWorks — Tags</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+:root{--bg:#f6f2ea;--ink:#2b2622;--mute:#7a7068;--line:#ddd3c4;--btn:#2f4a45;--warn:#9a3b1f;--ok:#2f6a3f}
+@media (prefers-color-scheme:dark){:root{--bg:#1f1c19;--ink:#ece6dc;--mute:#a59a8e;--line:#3a342e;--btn:#5f8c84;--warn:#e08a6a;--ok:#8fcf9f}}
+body{background:var(--bg);color:var(--ink);font:13px/1.45 -apple-system,system-ui,sans-serif;margin:0;padding:14px 14px 40px}
+h1{font:600 18px/1.2 Georgia,serif;margin:0 0 2px}
+.sub{color:var(--mute);margin:0 0 14px}
+h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:14px 0 6px}
+.btn{display:block;width:100%;margin:6px 0;padding:8px 10px;border:0;border-radius:7px;background:var(--btn);color:#fff;font:600 13px system-ui;text-align:left;cursor:pointer}
+.btn small{display:block;font-weight:400;opacity:.85}
+.btn:disabled{opacity:.4;cursor:default}
+.row{display:flex;gap:6px}.row .btn{flex:1}
+#st{margin-top:12px;padding:8px 10px;border:1px solid var(--line);border-radius:7px;min-height:18px;white-space:pre-wrap}
+#st.ok{border-color:var(--ok)} #st.warn{border-color:var(--warn);color:var(--warn)}
+.foot{position:fixed;left:0;right:0;bottom:0;padding:6px 14px;background:var(--bg);border-top:1px solid var(--line);color:var(--mute);font-size:11px;display:flex;justify-content:space-between}
+</style></head><body>
+<h1>Tags</h1>
+<p class="sub">Who speaks — as Word content controls. Proof Word-CC-002: a copy of the test book only.</p>
+<h2>Convert</h2>
+<button class="btn" id="toCC">// tags → controls<small>Each voice tag becomes a coloured control around its lines; the // line goes</small></button>
+<button class="btn" id="toTags">Controls → // tags<small>Back to text tags: a // line above each span, the control taken off</small></button>
+<h2>View</h2>
+<div class="row"><button class="btn" id="vTags">Tags<small>labels at both ends</small></button><button class="btn" id="vBox">Box<small>thin outline</small></button><button class="btn" id="vHidden">Hidden<small>clean prose</small></button></div>
+<h2>Labels</h2>
+<div class="row"><button class="btn" id="lName">Name<small>Fio, Rio, Leo</small></button><button class="btn" id="lShort">Short<small>F, R, L</small></button></div>
+<h2>Check</h2>
+<button class="btn" id="count">Count<small>Controls in this document, by character</small></button>
+<button class="btn" id="speed">Speed test<small>3,000 controls — in a new, empty document only</small></button>
+<div id="st">Ready.</div>
+<div class="foot"><span>Proof Word-CC-002</span><span>word.tags · 002</span></div>
+<script>
+const PALETTE = ['#1f6feb','#b5761a','#2f6a3f','#9a3b1f','#7b4bb7','#0f6b6e','#b0306a','#5d6b70'];
+const DIRECTIVE = /^(notes?\b|pause\b|slow ?0$|narrator\b|n$)/i;
+const st = document.getElementById('st');
+function say(t, k){ st.textContent = t; st.className = k || ''; }
+function busy(b){ document.querySelectorAll('.btn').forEach(x => x.disabled = b); }
+function who(body){ return body.split(',')[0].trim(); }
+function colour(name){ let h = 0; for (const c of name.toLowerCase()) h = (h * 31 + c.charCodeAt(0)) >>> 0; return PALETTE[h % PALETTE.length]; }
+async function act(label, fn){ busy(true); say(label + '…'); const t0 = performance.now();
+  try { const m = await fn(); say(m + `\n(${Math.round(performance.now() - t0)} ms)`, 'ok'); }
+  catch (e) { say(label + ' failed: ' + (e.message || e) + (e.debugInfo ? '\n' + JSON.stringify(e.debugInfo) : ''), 'warn'); }
+  busy(false); }
+async function mmControls(ctx){ const all = ctx.document.body.contentControls; all.load('items/tag'); await ctx.sync(); return all.items.filter(c => (c.tag || '').startsWith('MM:')); }
+
+// the spans: a voice tag line; blank lines under it skipped; its span the non-blank, non-// paragraphs that follow
+function findSpans(texts){
+  const spans = [];
+  for (let i = 0; i < texts.length; i++) {
+    const t = texts[i]; if (!t.startsWith('//')) continue;
+    const body = t.slice(2).trim(); if (!body || DIRECTIVE.test(body)) continue;
+    let j = i + 1; while (j < texts.length && texts[j] === '') j++;
+    if (j >= texts.length || texts[j].startsWith('//')) continue;          // a tag with nothing under it stays as text
+    let k = j; while (k + 1 < texts.length && texts[k + 1] !== '' && !texts[k + 1].startsWith('//')) k++;
+    spans.push({ i, j, k, body });
+  }
+  return spans;
+}
+
+document.getElementById('toCC').onclick = () => act('Converting', () => Word.run(async ctx => {
+  if ((await mmControls(ctx)).length) return 'This document already has tag controls — nothing done.';
+  const ps = ctx.document.body.paragraphs; ps.load('items/text'); await ctx.sync();
+  const items = ps.items, spans = findSpans(items.map(p => p.text.trim()));
+  let n = 0;
+  for (const s of spans.slice().reverse()) {                                  // bottom up: the paragraphs above keep their places
+    const r = items[s.j].getRange('Whole').expandTo(items[s.k].getRange('Whole'));
+    const cc = r.insertContentControl();
+    cc.tag = 'MM:' + s.body; cc.title = who(s.body); cc.color = colour(who(s.body)); cc.appearance = 'Tags';
+    items[s.i].delete();
+    if (++n % 200 === 0) await ctx.sync();
+  }
+  await ctx.sync();
+  const by = {}; spans.forEach(s => by[who(s.body)] = (by[who(s.body)] || 0) + 1);
+  return `${n} tag(s) made controls — ${Object.entries(by).map(([k, v]) => k + ' ' + v).join(', ')}.\nSave (⌘S) for the script.`;
+}));
+
+document.getElementById('toTags').onclick = () => act('Converting back', () => Word.run(async ctx => {
+  const cs = await mmControls(ctx); let n = 0;
+  for (const cc of cs.slice().reverse()) {
+    const p = cc.insertParagraph('//' + cc.tag.slice(3), 'Before');
+    p.font.italic = true; p.font.color = '#808080'; p.font.size = 5;          // as Format's Finished: grey, 5 pt, italic
+    cc.delete(true);                                                           // the control off, the words kept
+    if (++n % 200 === 0) await ctx.sync();
+  }
+  await ctx.sync();
+  return `${n} control(s) back to // tags.\nSave (⌘S) for the script.`;
+}));
+
+async function view(a){ return Word.run(async ctx => { const cs = await mmControls(ctx); cs.forEach(c => c.appearance = a); await ctx.sync(); return `${cs.length} control(s) shown as ${a}.`; }); }
+document.getElementById('vTags').onclick = () => act('Showing tags', () => view('Tags'));
+document.getElementById('vHidden').onclick = () => act('Hiding tags', () => view('Hidden'));
+document.getElementById('vBox').onclick = () => act('Boxing tags', () => view('BoundingBox'));
+// Short labels: the fewest first letters that tell this book's characters apart (Rio / Ruth → Ri / Ru)
+function shortNames(names){ const u = [...new Set(names)], out = {};
+  for (const n of u) { let k = 1; while (k < n.length && u.some(m => m !== n && m.slice(0, k).toLowerCase() === n.slice(0, k).toLowerCase())) k++; out[n] = n.slice(0, k); }
+  return out; }
+async function label(mode){ return Word.run(async ctx => { const cs = await mmControls(ctx);
+  const names = cs.map(c => who(c.tag.slice(3))), sh = shortNames(names);
+  cs.forEach((c, i) => c.title = mode === 'short' ? sh[names[i]] : names[i]); await ctx.sync();
+  return `${cs.length} label(s) ` + (mode === 'short' ? 'short — ' + Object.entries(sh).map(([k, v]) => v + ' = ' + k).join(', ') : 'as names') + '.'; }); }
+document.getElementById('lName').onclick = () => act('Labels as names', () => label('name'));
+document.getElementById('lShort').onclick = () => act('Short labels', () => label('short'));
+
+document.getElementById('count').onclick = () => act('Counting', () => Word.run(async ctx => {
+  const cs = await mmControls(ctx); const by = {};
+  cs.forEach(c => { const k = who(c.tag.slice(3)); by[k] = (by[k] || 0) + 1; });
+  return `${cs.length} tag control(s)` + (cs.length ? ' — ' + Object.entries(by).map(([k, v]) => k + ' ' + v).join(', ') : '') + '.';
+}));
+
+document.getElementById('speed').onclick = () => act('Speed test', () => Word.run(async ctx => {
+  const b = ctx.document.body; b.load('text'); await ctx.sync();
+  if (b.text.trim().length > 0) return 'Not empty — open a new, blank document (File → New) and press Speed test there.';
+  const names = ['Fio', 'Rio', 'Leo', 'Boatman'], N = 3000;
+  for (let n = 1; n <= N; n++) {
+    const nm = names[n % names.length];
+    const p = b.insertParagraph(`“Line ${n} — a sentence of about the length a character says in one breath,” ${nm} says.`, 'End');
+    const cc = p.getRange('Whole').insertContentControl();
+    cc.tag = 'MM:' + nm; cc.title = nm; cc.color = colour(nm); cc.appearance = 'Tags';
+    if (n % 250 === 0) await ctx.sync();
+  }
+  await ctx.sync();
+  return `${N} controls made. Now type a few sentences in the middle, scroll, switch Tags / Hidden — how does Word feel?`;
+}));
+
+Office.onReady(info => {
+  if (info.host !== Office.HostType.Word) { say('Open this in Word.', 'warn'); busy(true); return; }
+  if (!Office.context.requirements.isSetSupported('WordApi', '1.3')) { say('This Word is too old (needs WordApi 1.3).', 'warn'); busy(true); }
+});
+</script>
+</body></html>
